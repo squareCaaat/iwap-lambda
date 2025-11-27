@@ -86,6 +86,8 @@ def convert_audio_to_mp3(file_content, source_format):
 
 def detect_audio_format(file_content):
     kind = filetype.guess(file_content)
+    print(f"Detected MIME type: {kind.mime}")
+    print(f"Detected extension: {kind.extension}")
     if kind is None:
         return None
     
@@ -124,6 +126,7 @@ def handler(event, context):
             file_content, form_fields = parse_multipart_form_data(body, content_type)
 
             if file_content is None:
+                print("[ERROR] >> Failed to parse multipart form data")
                 return {
                     'statusCode': 400,
                     'body': json.dumps('Multipart Form Data 파싱에 실패했거나 파일을 찾을 수 없습니다.'),
@@ -132,6 +135,7 @@ def handler(event, context):
         elif event.get('isBase64Encoded', False):
             file_content = base64.b64decode(event['body'])
         else:
+            print("[ERROR] >> Invalid content type")
             return {
                 'statusCode': 400,
                 'body': json.dumps('파일은 Base64로 인코딩되거나 multipart/form-data 형식이어야 합니다.'),
@@ -139,6 +143,7 @@ def handler(event, context):
             }
 
         if not file_content:
+            print("[ERROR] >> No file content found")
             return {
                 'statusCode': 400,
                 'body': json.dumps('파일이 없습니다.'),
@@ -156,6 +161,7 @@ def handler(event, context):
             
             allowed_formats = ['png', 'jpg', 'jpeg']
             if img_format not in allowed_formats:
+                print(f"[ERROR] >> Unsupported image format: {img_format}")
                 return {
                     'statusCode': 400,
                     'body': json.dumps({
@@ -183,6 +189,7 @@ def handler(event, context):
 
             allowed_formats = ['webm', 'wav', 'mp3']            
             if audio_format not in allowed_formats:
+                print(f"[ERROR] >> Unsupported audio format: {audio_format}")
                 return {
                     'statusCode': 400,
                     'body': json.dumps({
@@ -195,7 +202,7 @@ def handler(event, context):
                 try:
                     upload_content = convert_audio_to_mp3(file_content, audio_format)
                 except Exception as e:
-                    print(f"Error converting audio: {e}")
+                    print(f"[ERROR] >> Error converting audio: {e}")
                     return {
                         'statusCode': 500,
                         'body': json.dumps({
@@ -216,6 +223,7 @@ def handler(event, context):
             img_format = detect_image_format(file_content)
 
             if img_format not in allowed_formats:
+                print(f"[ERROR] >> Unsupported image format: {img_format}")
                 return {
                     'statusCode': 400,
                     'body': json.dumps({
@@ -266,8 +274,9 @@ def handler(event, context):
                 nail_step = parse_numeric('nail_step', int, default=4)
                 strength = parse_numeric('strength', float, default=0.1)
                 rgb_value = parse_boolean_field('rgb', default=False)
-                wb_value = parse_boolean_field('wb', default=False)
+                wb_value = parse_boolean_field('wb', default=False) 
             except ValueError as exc:
+                print(f"[ERROR] >> Error parsing fields: {exc}")
                 return {
                     'statusCode': 400,
                     'body': json.dumps({'error': str(exc)}),
@@ -284,6 +293,7 @@ def handler(event, context):
             }
 
         else:
+            print(f"[ERROR] >> Invalid path: {http_path}")
             return {
                 'statusCode': 404,
                 'body': json.dumps('Not Found'),
@@ -318,7 +328,7 @@ def handler(event, context):
         }
 
     except Exception as e:
-        print(f"Error processing request: {e}")
+        print(f"[ERROR] >> Error processing request: {e}")
         return {
             'statusCode': 500,
             'body': json.dumps('Internal Server Error'),
