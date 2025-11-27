@@ -12,7 +12,8 @@ def handler(event, context):
         http_path = event['requestContext']['http']['path']
 
         if 'pathParameters' not in event or 'task_id' not in event['pathParameters']:
-             return {'statusCode': 400, 'body': json.dumps('task_id is missing.')}
+            print(f"Error getting result: {event}")
+            return {'statusCode': 400, 'body': json.dumps('task_id is missing.')}
 
         task_id = event['pathParameters']['task_id']
         content_type = ""
@@ -36,6 +37,7 @@ def handler(event, context):
             result_key = f"results/string/{task_id}.png"
             content_type = "image/png"
         else:
+            print(f"Cannot resolve the request: {event}")
             return {'statusCode': 404, 'body': json.dumps('Not Found')}
 
         try:
@@ -66,4 +68,4 @@ def handler(event, context):
 
     except Exception as e:
         print(f"Error getting result: {e}")
-        return {'statusCode': 500, 'body': json.dumps('Internal Server Error')}
+        return {'statusCode': 500, 'body': json.dumps(f'Internal Server Error: {e}')}
