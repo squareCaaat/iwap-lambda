@@ -17,6 +17,7 @@ UPLOAD_BUCKET = os.environ.get('UPLOAD_BUCKET')
 INSIDE_QUEUE_URL = os.environ.get('INSIDE_QUEUE_URL')
 PIANO_QUEUE_URL = os.environ.get('PIANO_QUEUE_URL')
 STRING_QUEUE_URL = os.environ.get('STRING_QUEUE_URL')
+MAX_PIANO_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 
 def parse_multipart_form_data(body, content_type):
     try:
@@ -84,16 +85,26 @@ def convert_audio_to_mp3(file_content, source_format):
     output_buffer.seek(0)
     return output_buffer.read()
 
-def detect_audio_format(file_content):
+def detect_audio_format_relaxed(file_content):
     kind = filetype.guess(file_content)
-    print(f"Detected MIME type: {kind.mime}")
-    print(f"Detected extension: {kind.extension}")
-    if kind is None:
-        return None
+    if kind is not None:
+        mime_type = (kind.mime or '').lower()
+        extension = kind.extension
+        print(f"[DEBUG] >> mime_type: {mime_type}, extension: {extension}")
+        if mime_type.startswith('audio/'):
+            return extension
+        if mime_type in ('video/webm', 'video/mp4'):
+            # Safari 등에서 mp4/m4a로 전달되는 케이스 보정
+            if mime_type == 'video/mp4':
+                return 'm4a'
+            return extension or 'webm'
     
-    if kind.mime.startswith('audio/'):
-        return kind.extension
-    return None
+    # filetype으로 판별되지 않아도 FFmpeg(pydub)에서 열 수 있으면 허용
+    try:
+        AudioSegment.from_file(BytesIO(file_content))
+        return 'detected_by_ffmpeg'
+    except Exception:
+        return None
 
 def parse_boolean_text(value):
     lowered = value.strip().lower()
@@ -185,34 +196,40 @@ def handler(event, context):
             upload_content = file_content
 
         elif http_path == '/api/piano':
-            audio_format = detect_audio_format(file_content)
+            if len(file_content) > MAX_PIANO_UPLOAD_SIZE:
+                print(f"[ERROR] >> Audio file too large: {len(file_content)} bytes")
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps('파일 크기 초과(최대 10MB).'),
+                    'headers': {'Content-Type': 'application/json'}
+                }
 
-            allowed_formats = ['webm', 'wav', 'mp3']            
-            if audio_format not in allowed_formats:
-                print(f"[ERROR] >> Unsupported audio format: {audio_format}")
+            audio_format = detect_audio_format_relaxed(file_content)
+
+            if not audio_format:
+                print("[ERROR] >> Unsupported audio format: detection failed")
                 return {
                     'statusCode': 400,
                     'body': json.dumps({
-                        'error': f'지원되지 않는 오디오 파일입니다. WebM, WAV, MP3 파일만 허용됩니다. 보낸 파일의 확장자: {audio_format}'
+                        'error': '지원되지 않는 오디오/비디오 파일입니다. WebM, MP3, WAV, MP4(M4A) 형식을 이용해 주세요.'
                     }),
                     'headers': {'Content-Type': 'application/json'}
                 }
-            
-            if audio_format in ['webm', 'wav']:
-                try:
-                    upload_content = convert_audio_to_mp3(file_content, audio_format)
-                except Exception as e:
-                    print(f"[ERROR] >> Error converting audio: {e}")
-                    return {
-                        'statusCode': 500,
-                        'body': json.dumps({
-                            'error': f'MP3 파일 변환에 실패했습니다: {str(e)}'
-                        }),
-                        'headers': {'Content-Type': 'application/json'}
-                    }
-            else:
-                upload_content = file_content
-            
+
+            source_format = None if audio_format == 'detected_by_ffmpeg' else audio_format
+
+            try:
+                upload_content = convert_audio_to_mp3(file_content, source_format)
+            except Exception as e:
+                print(f"[ERROR] >> Error converting audio: {e}")
+                return {
+                    'statusCode': 500,
+                    'body': json.dumps({
+                        'error': f'MP3 파일 변환에 실패했습니다: {str(e)}'
+                    }),
+                    'headers': {'Content-Type': 'application/json'}
+                }
+
             file_extension = '.mp3'
             s3_key = f"uploads/piano/{task_id}{file_extension}"
             queue_url = PIANO_QUEUE_URL
